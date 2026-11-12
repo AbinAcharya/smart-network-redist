@@ -1,0 +1,55 @@
+/* ============================================
+   COMPLETE FIX FOR GREEN FOCUS OUTLINE
+   ============================================ */
+
+/* Nuclear option: Remove ALL outlines from EVERYTHING */
+*,
+*::before,
+*::after,
+*:focus,
+*:focus-visible,
+*:focus-within {
+  outline: 0 !important;
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-color: transparent !important;
+  outline-style: none !important;
+}
+
+/* Specifically target all input elements */
+input,
+input[type="text"],
+input[type="search"],
+input:focus,
+input:focus-visible,
+input:focus-within,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Target the search bar specifically */
+.map-search,
+.map-search *,
+.map-search input,
+.map-search:focus-within,
+#destination-input,
+#destination-input:focus,
+#destination-input:focus-visible,
+#origin-input,
+#origin-input:focus,
+#origin-input:focus-visible {
+  outline: 0 !important;
+  outline: none !important;
+  -webkit-appearance: none !important;
+}
+
+/* Keep focus visible ONLY for buttons for accessibility */
+button:focus-visible:not(.search-submit):not(.rail-button):not(.sidebar-toggle) {
+  outline: 2px solid rgba(45, 134, 199, 0.5) !important;
+  outline-offset: 2px !important;
+}

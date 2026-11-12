@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#e8efe9">
+    <meta name="description" content="Map-first India navigation with route alternatives and nearby places.">
+    <title>Flowstate — India navigation</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <link rel="preconnect" href="https://tile.openstreetmap.org">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <link rel="stylesheet" href="/navigation.css">
+    <link rel="stylesheet" href="/ui-enhancements.css">
+    <link rel="stylesheet" href="/premium-features.css">
+    <link rel="stylesheet" href="/remove-outline.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside id="sidebar" class="sidebar" aria-label="Trip planning">
+        <div class="sidebar-top">
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button"
+            aria-label="Expand navigation menu" aria-expanded="false" aria-controls="sidebar-content">
+            <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+          </button>
+          <div class="sidebar-heading">
+            <h1>Plan your next trip</h1>
+            <p>Your places, right where you need them.</p>
+          </div>
+        </div>
+
+        <nav class="sidebar-rail" aria-label="Quick navigation">
+          <button id="open-home-panel" class="rail-button" type="button" aria-label="Open Home section" title="Home">
+            <svg class="home-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none">
+              <path d="M3.75 10.25 12 3.75l8.25 6.5v9a1 1 0 0 1-1 1h-5.5v-6h-3.5v6h-5.5a1 1 0 0 1-1-1v-9Z"/>
+            </svg>
+          </button>
+          <button id="open-recents-panel" class="rail-button" type="button" aria-label="Open recent places" title="Recent places">
+            <span aria-hidden="true">◷</span>
+          </button>
+        </nav>
+
+        <div id="sidebar-content" class="sidebar-content" inert>
+          <section class="saved-section" aria-labelledby="go-to-heading">
+            <h2 class="small-heading" id="go-to-heading">GO TO</h2>
+            <div class="home-card">
+              <div class="home-card-top">
+                <button id="home-shortcut" class="home-shortcut" type="button">
+                  <span class="saved-icon" aria-hidden="true">
+                    <svg class="home-icon" viewBox="0 0 24 24" fill="none">
+                      <path d="M3.75 10.25 12 3.75l8.25 6.5v9a1 1 0 0 1-1 1h-5.5v-6h-3.5v6h-5.5a1 1 0 0 1-1-1v-9Z"/>
+                    </svg>
+                  </span>
+                  <span class="saved-copy">
+                    <strong id="home-label">Home</strong>
+                    <small id="home-subtitle">Set a home place for quick directions</small>
+                  </span>
+                </button>
+                <button id="change-home" class="home-change-button" type="button" hidden>Change</button>
+              </div>
+              <button id="set-current-home" class="home-current-button" type="button">
+                Set current location as Home
+              </button>
+            </div>
+            <button id="location-button" class="sidebar-link" type="button">Set starting point manually</button>
+            <div id="origin-controls" class="origin-controls" hidden>
+              <label for="origin-input">Starting point</label>
+              <input id="origin-input" type="text" placeholder="Search a starting place" autocomplete="off">
+              <div class="origin-actions">
+                <button id="find-origin" class="mini-button" type="button">Choose start</button>
+                <button id="use-current-location" class="mini-button secondary-mini" type="button">Use my location</button>
+              </div>
+            </div>
+            <p id="origin-summary" class="origin-summary" hidden></p>
+          </section>
+
+          <section class="saved-section recent-section" aria-labelledby="recent-heading">
+            <div class="section-heading-row">
+              <h2 class="small-heading" id="recent-heading">RECENT PLACES</h2>
+              <button id="clear-recents" class="quiet-button" type="button" hidden>Clear</button>
+            </div>
+            <div id="recent-list" class="recent-list"></div>
+            <p id="recent-empty" class="empty-note">Places you choose will appear here.</p>
+            <p class="storage-note">Saved on this device only.</p>
+          </section>
+
+          <section id="nearby-section" class="nearby-section" aria-live="polite" hidden>
+            <div class="section-heading-row">
+              <h2 id="nearby-heading">Nearby places</h2>
+              <button id="nearby-view-toggle" class="quiet-button" type="button"
+                aria-pressed="false">Map only</button>
+              <button id="clear-nearby" class="quiet-button" type="button">Hide results</button>
+            </div>
+            <p id="nearby-message" class="empty-note"></p>
+            <div id="nearby-list" class="nearby-list"></div>
+          </section>
+
+          <section id="route-section" class="route-section" aria-live="polite" hidden>
+            <div class="section-title-row">
+              <div>
+                <p class="eyebrow">ROUTE OPTIONS</p>
+                <h2 id="route-count">Choose a route</h2>
+              </div>
+              <span class="estimate-label">ESTIMATES</span>
+            </div>
+            <p id="route-rationale" class="route-rationale"></p>
+            <p class="traffic-notice">Traffic status will appear with your routes.</p>
+            <div class="traffic-summary" id="traffic-summary" hidden></div>
+            <button id="refresh-traffic" class="text-button refresh-traffic" type="button" disabled>Refresh traffic</button>
+            <div id="route-options" class="route-options"></div>
+            <button id="start-navigation" class="primary-button navigation-button" type="button" disabled>Start navigation <span aria-hidden="true">↑</span></button>
+          </section>
+
+          <section id="navigation-card" class="navigation-card" aria-live="polite" hidden>
+            <p class="eyebrow">NAVIGATION</p>
+            <div class="next-step" id="next-step">Follow the highlighted route</div>
+            <div class="next-distance" id="next-distance"></div>
+            <div class="trip-progress" id="trip-progress"></div>
+            <button id="stop-navigation" class="secondary-button" type="button">End trip</button>
+          </section>
+        </div>
+        <button id="location-indicator" class="location-indicator" type="button"
+          aria-label="Location is being determined. Center map on current location."
+          title="Location is being determined. Center map on current location.">
+          <span class="location-indicator-symbol" aria-hidden="true"><span></span></span>
+          <span class="location-indicator-copy">
+            <strong id="location-indicator-label">Locating</strong>
+            <small id="location-indicator-detail">GPS</small>
+          </span>
+        </button>
+      </aside>
+
+      <section class="map-panel" aria-label="Navigation map">
+        <div id="map" role="application" aria-label="Map showing your current location, places, and routes"></div>
+
+        <div class="map-tools">
+          <form id="route-form" class="map-search" role="search">
+            <span class="search-icon" aria-hidden="true"></span>
+            <span class="search-prompt" aria-hidden="true">
+              <span class="search-caret"></span>
+              <span>Search places, addresses, or businesses</span>
+            </span>
+            <input id="destination-input" type="search" placeholder=""
+              autocomplete="off" aria-label="Search destinations" aria-autocomplete="list"
+              aria-controls="place-options" required>
+            <button class="search-submit" id="find-routes" type="submit" aria-label="Search" title="Find routes">
+              <span aria-hidden="true">→</span>
+            </button>
+          </form>
+
+          <nav class="category-bar" aria-label="Explore nearby categories">
+            <button class="category-chip active" type="button" data-category="food">Food &amp; drink</button>
+            <button class="category-chip" type="button" data-category="things">Things to do</button>
+            <button class="category-chip" type="button" data-category="shopping">Shopping</button>
+            <button class="category-chip" type="button" data-category="services">Services</button>
+            <button class="category-chip" type="button" data-category="fuel">Fuel</button>
+          </nav>
+
+          <section class="search-results" id="search-results" aria-live="polite" hidden>
+            <h2 id="search-heading">Suggested destinations</h2>
+            <div id="place-options" class="place-options" role="listbox" aria-label="Place suggestions"></div>
+          </section>
+        </div>
+
+        <div class="map-pill" id="map-status" role="status">Requesting location permission…</div>
+        <div id="map-legend" class="map-legend" aria-label="Route map legend" hidden>
+          <span><i class="legend-line primary-line"></i>Selected route</span>
+          <span><i class="legend-line alternate-line"></i>Alternative route</span>
+          <span><i class="legend-dot"></i>Traffic sampled at route points only</span>
+        </div>
+        <button id="report-issue" class="report-issue-button" type="button">Report a map issue</button>
+        <button id="recenter-button" class="recenter-button" type="button" aria-label="Center map on my location" title="Center on my location">◎</button>
+        <div class="map-disclaimer">Traffic samples cover selected route points only; routes are not assigned to driver groups.</div>
+      </section>
+    </main>
+
+    <dialog id="incident-dialog" class="incident-dialog" aria-labelledby="incident-heading">
+      <form id="incident-form" method="dialog">
+        <h2 id="incident-heading">Report a map issue</h2>
+        <p>Save a note on this device. It is not sent to other drivers or used to change traffic or routes.</p>
+        <label for="incident-type">Issue type</label>
+        <select id="incident-type" required>
+          <option value="closure">Road closure</option>
+          <option value="crash">Crash or breakdown</option>
+          <option value="hazard">Road hazard</option>
+          <option value="works">Road works</option>
+          <option value="map">Map correction</option>
+        </select>
+        <label for="incident-details">Details (optional)</label>
+        <textarea id="incident-details" rows="3" maxlength="240" placeholder="Add a short note"></textarea>
+        <div class="incident-location" id="incident-location">Location: current map center</div>
+        <div class="dialog-actions">
+          <button id="incident-pick-location" class="secondary-button" type="button">Pick location on map</button>
+          <button id="incident-cancel" class="secondary-button" type="button">Cancel</button>
+          <button class="primary-button" type="submit">Save on this device</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="/ui-enhancements.js"></script>
+    <script src="/premium-features.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+.map-marker {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 2px solid #eef5f7;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+  color: #0c1920;
+  font: 700 11px 'DM Sans', sans-serif;
+}
+.origin-marker { background: #ff9e68; }
+.destination-marker { background: #73e5bd; }
