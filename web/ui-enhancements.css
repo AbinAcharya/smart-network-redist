@@ -152,10 +152,6 @@
   transform: translateX(3px);
 }
 
-.category-chip:hover {
-  box-shadow: 0 8px 20px rgba(34, 53, 45, 0.22);
-}
-
 /* Staggered Entrance Animations */
 @keyframes fade-slide-up {
   from {
@@ -340,7 +336,6 @@
 
 /* Map Controls Depth Enhancement */
 .map-search,
-.category-chip,
 .search-results,
 .map-pill,
 .recenter-button,

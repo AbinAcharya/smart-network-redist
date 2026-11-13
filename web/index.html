@@ -42,7 +42,10 @@
 
         <div id="sidebar-content" class="sidebar-content" inert>
           <section class="saved-section" aria-labelledby="go-to-heading">
-            <h2 class="small-heading" id="go-to-heading">GO TO</h2>
+            <h2 class="small-heading section-heading" id="go-to-heading">
+              <span class="section-heading-icon icon-home" aria-hidden="true">⌂</span>
+              GO TO
+            </h2>
             <div class="home-card">
               <div class="home-card-top">
                 <button id="home-shortcut" class="home-shortcut" type="button">
@@ -76,7 +79,10 @@
 
           <section class="saved-section recent-section" aria-labelledby="recent-heading">
             <div class="section-heading-row">
-              <h2 class="small-heading" id="recent-heading">RECENT PLACES</h2>
+              <h2 class="small-heading section-heading" id="recent-heading">
+                <span class="section-heading-icon icon-recent" aria-hidden="true">◷</span>
+                RECENT PLACES
+              </h2>
               <button id="clear-recents" class="quiet-button" type="button" hidden>Clear</button>
             </div>
             <div id="recent-list" class="recent-list"></div>
@@ -98,7 +104,10 @@
           <section id="route-section" class="route-section" aria-live="polite" hidden>
             <div class="section-title-row">
               <div>
-                <p class="eyebrow">ROUTE OPTIONS</p>
+                <p class="eyebrow section-heading route-eyebrow">
+                  <span class="section-heading-icon icon-routes" aria-hidden="true">↗</span>
+                  ROUTE OPTIONS
+                </p>
                 <h2 id="route-count">Choose a route</h2>
               </div>
               <span class="estimate-label">ESTIMATES</span>

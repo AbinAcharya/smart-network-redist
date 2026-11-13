@@ -208,9 +208,11 @@ function renderSavedPlaces() {
 
   const recentList = document.getElementById('recent-list');
   const recentEmpty = document.getElementById('recent-empty');
+  const recentEmptyState = recentList.parentElement.querySelector('.empty-state-container');
   const clearRecents = document.getElementById('clear-recents');
   recentList.replaceChildren();
-  recentEmpty.hidden = recentPlaces.length > 0;
+  if (recentEmpty) recentEmpty.hidden = recentPlaces.length > 0;
+  if (recentEmptyState) recentEmptyState.hidden = recentPlaces.length > 0;
   clearRecents.hidden = recentPlaces.length === 0;
   recentPlaces.forEach((place) => {
     const button = document.createElement('button');
@@ -226,11 +228,34 @@ function renderSavedPlaces() {
     name.textContent = place.label.split(',')[0];
     const description = document.createElement('small');
     description.textContent = place.label;
-    copy.append(name, description);
+    const chosenAt = document.createElement('small');
+    chosenAt.className = 'recent-time';
+    chosenAt.textContent = Number.isFinite(place.chosenAt)
+      && Number.isFinite(new Date(place.chosenAt).getTime())
+      ? `Selected ${formatRelativeTime(place.chosenAt)}`
+      : 'Previously selected';
+    copy.append(name, description, chosenAt);
     button.append(icon, copy);
+    const distance = distanceLabel(place);
+    if (distance) {
+      const badge = document.createElement('span');
+      badge.className = 'recent-distance-badge';
+      badge.textContent = distance;
+      badge.setAttribute('aria-label', `Approximately ${distance} away in a straight line`);
+      button.append(badge);
+    }
     button.addEventListener('click', () => selectDestination(place));
     recentList.append(button);
   });
+}
+
+function formatRelativeTime(timestamp) {
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (elapsedSeconds < 60) return 'just now';
+  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)} min ago`;
+  if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)} hr ago`;
+  if (elapsedSeconds < 7 * 86400) return `${Math.floor(elapsedSeconds / 86400)} days ago`;
+  return new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' }).format(timestamp);
 }
 
 function saveHomePlace(place) {
@@ -247,8 +272,9 @@ function saveHomePlace(place) {
 }
 
 function addRecentPlace(place) {
+  const recentPlace = { ...place, chosenAt: Date.now() };
   recentPlaces = [
-    place,
+    recentPlace,
     ...recentPlaces.filter((recent) =>
       Math.abs(recent.lat - place.lat) > 0.0001
       || Math.abs(recent.lon - place.lon) > 0.0001),
@@ -303,6 +329,7 @@ function setOriginMode(useManual) {
 }
 
 function updateLocation(position) {
+  const isFirstLocationFix = currentFix === null;
   currentFix = {
     lat: position.coords.latitude,
     lon: position.coords.longitude,
@@ -339,6 +366,7 @@ function updateLocation(position) {
     map._flowstateHasCentered = true;
   }
   const accuracy = Math.round(currentFix.accuracy);
+  if (isFirstLocationFix) renderSavedPlaces();
   setLocationStatus(`Location ready · accuracy about ${accuracy} m`);
   setLocationIndicator('ready', `±${accuracy} m`);
   if (awaitingLocationForRoute && destinationPlace && !manualOrigin) {
@@ -729,7 +757,7 @@ function renderPlaceSuggestions(places, heading = 'Suggested destinations') {
     const name = document.createElement('strong');
     name.className = 'suggestion-name';
     name.textContent = nameText.trim();
-    const details = document.createElement('span');
+    const details = document.createElement('div');
     details.className = 'suggestion-details';
     details.textContent = addressParts.join(',').trim() || place.label;
     option.append(name, details);
@@ -992,6 +1020,14 @@ function renderRoutes() {
     `${routeChoices.length} route${routeChoices.length === 1 ? '' : 's'}`;
   const bestEta = Math.min(...routeChoices.map((route) =>
     Number.isFinite(route.live_eta_min) ? route.live_eta_min : route.duration_min));
+  const maxEtaDifference = Math.max(0, ...routeChoices.map((route) =>
+    (Number.isFinite(route.live_eta_min) ? route.live_eta_min : route.duration_min) - bestEta));
+  const sampledDelays = routeChoices
+    .filter((route) => ['live', 'partial'].includes(route.traffic?.state)
+      && Number.isFinite(route.traffic.delay_percent))
+    .map((route) => Math.max(0, route.traffic.delay_percent));
+  const minSampledDelay = sampledDelays.length ? Math.min(...sampledDelays) : null;
+  const maxSampledDelay = sampledDelays.length ? Math.max(...sampledDelays) : null;
   document.getElementById('route-rationale').textContent =
     'Routes are ordered by estimated travel time. Alternatives provide route choices; drivers are not automatically assigned or redistributed.';
   document.getElementById('map-legend').hidden = routeChoices.length === 0;
@@ -1003,8 +1039,7 @@ function renderRoutes() {
     option.setAttribute('aria-pressed', String(index === selectedRouteIndex));
     const mark = document.createElement('span');
     mark.className = 'route-mark';
-    mark.style.setProperty('--route-color', ROUTE_COLORS[index % ROUTE_COLORS.length]);
-    const details = document.createElement('span');
+    const details = document.createElement('div');
     const label = document.createElement('span');
     label.className = 'route-label';
     const etaMinutes = Number.isFinite(route.live_eta_min) ? route.live_eta_min : route.duration_min;
@@ -1014,14 +1049,49 @@ function renderRoutes() {
     const subtitle = document.createElement('span');
     subtitle.className = 'route-subtitle';
     const routeTraffic = route.traffic || {};
+    const hasTrafficSamples = ['live', 'partial'].includes(routeTraffic.state)
+      && Number.isFinite(routeTraffic.delay_percent);
     const sampleText = routeTraffic.state === 'live' || routeTraffic.state === 'partial'
       ? `Traffic sampled at ${routeTraffic.sampled_segments || 0} route points`
       : 'Traffic not sampled';
     const extraTime = Math.max(0, Math.round(etaMinutes - bestEta));
+    const relativeEta = maxEtaDifference > 0 ? extraTime / maxEtaDifference : 0;
+    const hasDistinctTrafficDelays = hasTrafficSamples && maxSampledDelay > minSampledDelay;
+    const relativeTrafficDelay = hasDistinctTrafficDelays
+      ? (Math.max(0, routeTraffic.delay_percent) - minSampledDelay)
+        / (maxSampledDelay - minSampledDelay)
+      : relativeEta;
+    const routeColor = `hsl(${Math.round(120 - relativeTrafficDelay * 120)} 55% 40%)`;
     subtitle.textContent = index === 0
       ? `${formatDistance(route.distance_km)} · ${sampleText}`
       : `${formatDistance(route.distance_km)} · ${extraTime} min more · ${sampleText}`;
     details.append(label, subtitle);
+    const delayLabel = document.createElement('span');
+    delayLabel.className = 'route-delay-label';
+    const delayTrack = document.createElement('span');
+    delayTrack.className = 'route-delay-track';
+    delayTrack.setAttribute('role', 'progressbar');
+    delayTrack.setAttribute(
+      'aria-label',
+      hasDistinctTrafficDelays
+        ? 'Relative sampled traffic delay'
+        : 'Relative travel time compared with fastest route',
+    );
+    delayTrack.setAttribute('aria-valuemin', '0');
+    delayTrack.setAttribute('aria-valuemax', '100');
+    delayTrack.setAttribute('aria-valuenow', String(Math.round(relativeTrafficDelay * 100)));
+    const delayFill = document.createElement('span');
+    delayFill.className = 'route-delay-fill';
+    mark.style.setProperty('--route-color', routeColor);
+    delayLabel.textContent = hasDistinctTrafficDelays
+      ? `Sampled delay ${Math.max(0, routeTraffic.delay_percent)}% · ${extraTime} min slower`
+      : `Relative ETA +${extraTime} min${hasTrafficSamples
+      ? ` · sampled delay ${Math.max(0, routeTraffic.delay_percent)}%`
+      : ' · no live sample'}`;
+    delayFill.style.width = `${8 + relativeTrafficDelay * 92}%`;
+    delayFill.style.backgroundColor = routeColor;
+    delayTrack.append(delayFill);
+    details.append(delayLabel, delayTrack);
     const time = document.createElement('span');
     time.className = 'route-time';
     time.append(document.createTextNode(`${etaMinutes} min`));
@@ -1108,27 +1178,6 @@ function distanceFromRoute(point, route) {
 
 function updateNavigationStep() {
   if (!activeNavigation || !currentFix || !routeChoices[selectedRouteIndex]) return;
-  const instructions = routeChoices[selectedRouteIndex].instructions;
-  if (!instructions.length) return;
-  const point = [currentFix.lat, currentFix.lon];
-  let closestIndex = 0;
-  let closestDistance = Infinity;
-  instructions.forEach((step, index) => {
-    const distance = distanceToSegmentMetres(point, step.location, step.location);
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestIndex = index;
-    }
-  });
-  const next = instructions[Math.min(closestIndex + 1, instructions.length - 1)];
-  document.getElementById('next-step').textContent = next.text;
-  document.getElementById('next-distance').textContent =
-    next.location
-      ? `Approx. to next turn · ${formatDistance(haversineMetres(currentFix, {
-        lat: next.location[0],
-        lon: next.location[1],
-      }) / 1000)}`
-      : '';
   const route = routeChoices[selectedRouteIndex];
   const routeLength = route.points.reduce((total, point, index) => {
     if (index === 0) return total;
@@ -1155,11 +1204,46 @@ function updateNavigationStep() {
     }
   });
   const progress = routeLength > 0 ? Math.min(1, completedDistance / routeLength) : 0;
+  const selectedRouteProgress = routeOptions.querySelector(
+    '.route-option.selected .route-delay-track',
+  );
+  const selectedRouteProgressLabel = routeOptions.querySelector(
+    '.route-option.selected .route-delay-label',
+  );
+  if (selectedRouteProgress && selectedRouteProgressLabel) {
+    const progressPercent = Math.round(progress * 100);
+    selectedRouteProgress.setAttribute('aria-label', 'Trip progress on selected route');
+    selectedRouteProgress.setAttribute('aria-valuenow', String(progressPercent));
+    selectedRouteProgressLabel.textContent = `Trip progress ${progressPercent}%`;
+    selectedRouteProgress.firstElementChild.style.width = `${progressPercent}%`;
+  }
   const remainingKm = (route.distance_km || routeLength / 1000) * (1 - progress);
   const totalMinutes = Number.isFinite(route.live_eta_min) ? route.live_eta_min : route.duration_min;
   const remainingMinutes = Math.ceil(totalMinutes * (1 - progress));
   document.getElementById('trip-progress').textContent =
     `Approx. ${formatDistance(remainingKm)} remaining · ${remainingMinutes} min by current estimate`;
+
+  const instructions = route.instructions;
+  if (!instructions.length) return;
+  const point = [currentFix.lat, currentFix.lon];
+  let closestIndex = 0;
+  let closestDistance = Infinity;
+  instructions.forEach((step, index) => {
+    const distance = distanceToSegmentMetres(point, step.location, step.location);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+  const next = instructions[Math.min(closestIndex + 1, instructions.length - 1)];
+  document.getElementById('next-step').textContent = next.text;
+  document.getElementById('next-distance').textContent =
+    next.location
+      ? `Approx. to next turn · ${formatDistance(haversineMetres(currentFix, {
+        lat: next.location[0],
+        lon: next.location[1],
+      }) / 1000)}`
+      : '';
 }
 
 function checkOffRoute() {
@@ -1365,6 +1449,7 @@ document.getElementById('start-navigation').addEventListener('click', () => {
 document.getElementById('stop-navigation').addEventListener('click', () => {
   activeNavigation = false;
   offRouteReadings = 0;
+  if (routeChoices.length) renderRoutes();
   document.getElementById('navigation-card').hidden = true;
   document.getElementById('start-navigation').hidden = false;
   setLocationStatus(currentFix ? 'Location ready' : 'Navigation ended');
