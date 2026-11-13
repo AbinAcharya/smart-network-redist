@@ -347,7 +347,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
   top: 22px;
   left: calc(var(--sidebar-width) + 28px);
   display: grid;
-  width: min(500px, calc(100vw - var(--sidebar-width) - 48px));
+  width: min(560px, calc(100vw - var(--sidebar-width) - 48px));
   gap: 8px;
 }
 .map-search {
@@ -383,7 +383,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
 .category-chip { min-height: 38px; flex: 0 0 auto; padding: 0 14px; border: 1px solid rgb(226 234 228 / 90%); border-radius: 20px; background: #fff; color: #40554a; box-shadow: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 140ms ease, transform 140ms ease; }
 .category-chip:hover { transform: translateY(-1px); background: #f8fbf9; }
 .category-chip.active { border-color: #147b67; background: #147b67; color: #fff; }
-.search-results { position: absolute; top: 108px; left: 0; width: min(100%, 500px); padding: 13px; border: 1px solid #e9eeeb; border-radius: 14px; background: #fff; box-shadow: 0 8px 28px rgb(34 53 45 / 16%); }
+.search-results { position: absolute; top: 108px; left: 0; width: min(100%, 560px); padding: 13px; border: 1px solid #e9eeeb; border-radius: 14px; background: #fff; box-shadow: 0 8px 28px rgb(34 53 45 / 16%); }
 .search-results h2 { margin: 0; color: #293d34; font-size: 14px; font-weight: 680; }
 .place-options { display: grid; max-height: 300px; gap: 3px; overflow-y: auto; margin-top: 8px; }
 .place-option { display: grid; width: 100%; gap: 3px; padding: 10px 9px; border: 0; border-radius: 8px; background: #fff; color: #42544a; font-size: 12px; line-height: 1.45; text-align: left; cursor: pointer; }
@@ -428,7 +428,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
 @media (max-width: 900px) {
   .app-shell.sidebar-expanded { --sidebar-width: 320px; }
   .sidebar-content { padding-right: 16px; padding-left: 16px; }
-  .map-tools { width: min(500px, calc(100vw - var(--sidebar-width) - 40px)); }
+  .map-tools { width: min(560px, calc(100vw - var(--sidebar-width) - 40px)); }
   .category-chip { padding: 0 12px; font-size: 11px; }
   .app-shell.sidebar-expanded .leaflet-top.leaflet-right { top: 136px; }
 }
@@ -447,7 +447,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
   .sidebar:not(.expanded) .rail-button { width: 38px; height: 38px; }
   .location-indicator { display: none; }
   .saved-section { margin-bottom: 14px; }
-  .map-tools { top: 12px; left: 12px; width: calc(100vw - 24px); gap: 6px; }
+  .map-tools { top: 12px; left: 6px; width: calc(100vw - 12px); gap: 6px; }
   .leaflet-top.leaflet-right { top: 124px; }
   .map-search { --search-prompt-left: 39px; height: 52px; gap: 10px; padding: 0 8px 0 13px; border-radius: 16px; }
   .map-search input { font-size: 12px; }
@@ -456,8 +456,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible {
   .search-icon { width: 15px; height: 15px; border-width: 1.8px; }
   .search-icon::after { right: -5px; bottom: -3px; width: 6px; height: 1.8px; }
   .search-submit { width: 34px; height: 34px; }
-  .category-bar { width: 100%; gap: 5px; }
-  .category-chip { min-height: 33px; padding: 0 10px; font-size: 10px; }
+  .category-bar { width: 100%; gap: 4px; }
+  .category-chip { min-height: 33px; padding: 0 9px; font-size: 10px; }
   .search-results { top: 99px; width: 100%; }
   .map-pill { bottom: 16px; left: 12px; max-width: calc(100vw - 90px); padding: 8px 10px; font-size: 10px; }
   .report-issue-button { bottom: 72px; left: 12px; right: auto; }

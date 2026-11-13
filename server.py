@@ -26,12 +26,18 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
+APP_PORT = 8012
 DEMAND_LIMIT = 10_000
 PROVIDER_TIMEOUT_SECONDS = 15
 NOMINATIM_MIN_INTERVAL_SECONDS = 1.0
 TOMTOM_CACHE_SECONDS = 45
 TOMTOM_SAMPLE_POINTS_PER_ROUTE = 3
 TOMTOM_SAMPLE_WORKERS = 5
+TOMTOM_SEARCH_LIMIT = 100
+TOMTOM_CATEGORY_RESULTS_PER_QUERY = 100
+TOMTOM_SEARCH_WORKERS = 3
+MAX_ROUTE_CANDIDATES = 9
+MAX_DISPLAYED_ROUTES = 3
 _geocode_lock = threading.Lock()
 _last_geocode_at = 0.0
 _traffic_cache_lock = threading.Lock()
@@ -306,11 +312,20 @@ def suggest_places(query: str) -> list[dict]:
 
 
 NEARBY_CATEGORIES = {
-    "food": ("restaurant", "cafe"),
-    "things": ("park", "museum"),
-    "shopping": ("shopping center", "supermarket"),
-    "services": ("hospital", "pharmacy"),
-    "fuel": ("gas station",),
+    "restaurants": (
+        "restaurant", "café", "coffee shop", "café/pub", "bar", "pub", "nightlife",
+    ),
+    "things": (
+        "park", "park recreation area", "museum", "important tourist attraction",
+        "amusement park", "zoo",
+    ),
+    "shopping": (
+        "mall", "shopping center", "supermarkets hypermarkets",
+        "jewelry, clocks watches",
+    ),
+    "hospitals": ("hospital", "hospital/polyclinic", "clinic", "medical center"),
+    "fuel": ("petrol station", "electric vehicle station"),
+    "atm": ("ATM",),
 }
 
 
@@ -355,6 +370,104 @@ def _tomtom_place_result(item: object) -> dict | None:
     }
 
 
+def _tomtom_atm_result(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    poi = item.get("poi")
+    if not isinstance(poi, dict):
+        return False
+    name = poi.get("name", "")
+    name = name.casefold() if isinstance(name, str) else ""
+    categories = poi.get("categories", [])
+    if not isinstance(categories, list):
+        return False
+    categories = {
+        category.strip().casefold()
+        for category in categories
+        if isinstance(category, str)
+    }
+    return bool(
+        categories.intersection({"automatic teller machine", "cash dispenser"})
+        or ("atm" in name and "bank" in categories)
+    )
+
+
+def _tomtom_search_results(
+    service: str,
+    query: str,
+    params: dict[str, object],
+    max_results: int | None = None,
+) -> list[object]:
+    results = []
+    offset = 0
+    seen_pages = set()
+    while True:
+        page_limit = min(TOMTOM_SEARCH_LIMIT, max_results) if max_results else TOMTOM_SEARCH_LIMIT
+        page_params = {**params, "limit": page_limit, "ofs": offset}
+        data = _provider_json(
+            f"https://api.tomtom.com/search/2/{service}/"
+            f"{quote(query, safe='')}.json?{urlencode(page_params)}"
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            raise ProviderError("TomTom returned an invalid nearby places response.")
+        page = data["results"]
+        if not page:
+            break
+        signature = json.dumps(page, sort_keys=True, separators=(",", ":"))
+        if signature in seen_pages:
+            raise ProviderError("TomTom repeated a nearby results page; search could not be completed.")
+        seen_pages.add(signature)
+        results.extend(page)
+        if max_results is not None and len(results) >= max_results:
+            break
+        if len(page) < TOMTOM_SEARCH_LIMIT:
+            break
+        offset += len(page)
+    return results
+
+
+def _nearby_distance_metres(
+    start_lat: float, start_lon: float, end_lat: float, end_lon: float
+) -> float:
+    radians = math.radians
+    latitude_delta = radians(end_lat - start_lat)
+    longitude_delta = radians(end_lon - start_lon)
+    latitude1, latitude2 = radians(start_lat), radians(end_lat)
+    a = (
+        math.sin(latitude_delta / 2) ** 2
+        + math.cos(latitude1) * math.cos(latitude2)
+        * math.sin(longitude_delta / 2) ** 2
+    )
+    a = min(1.0, max(0.0, a))
+    return 6_371_000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _merge_nearby_results(
+    items: list[object], lat: float, lon: float, radius: int
+) -> list[dict]:
+    collected = {}
+    for item in items:
+        place = _tomtom_place_result(item)
+        if place is None or _nearby_distance_metres(
+            lat, lon, place["lat"], place["lon"]
+        ) > radius:
+            continue
+        key = ("id", place["id"]) if place["id"] else (
+            "place", round(place["lat"], 6), round(place["lon"], 6),
+            place["label"].casefold(),
+        )
+        collected.setdefault(key, place)
+    return sorted(
+        collected.values(),
+        key=lambda place: _nearby_distance_metres(lat, lon, place["lat"], place["lon"]),
+    )
+
+
+def _validate_nearby_radius(radius: int) -> None:
+    if isinstance(radius, bool) or not isinstance(radius, int) or not 500 <= radius <= 50_000:
+        raise InvalidLocation("Search radius must be between 500 and 50,000 metres.")
+
+
 def nearby_places(category: str, lat: float, lon: float, radius: int = 10_000) -> list[dict]:
     key = os.environ.get("TOMTOM_API_KEY", "").strip()
     if not key:
@@ -362,31 +475,61 @@ def nearby_places(category: str, lat: float, lon: float, radius: int = 10_000) -
     if category not in NEARBY_CATEGORIES:
         raise InvalidLocation("Choose a supported nearby-place category.")
     lat, lon = _coordinate({"lat": lat, "lon": lon}, "Search center")
-    if isinstance(radius, bool) or not isinstance(radius, int) or not 500 <= radius <= 50_000:
-        raise InvalidLocation("Search radius must be between 500 and 50,000 metres.")
+    _validate_nearby_radius(radius)
+    params = {
+        "key": key,
+        "lat": f"{lat:.6f}",
+        "lon": f"{lon:.6f}",
+        "radius": radius,
+        "countrySet": "IN",
+        "language": "en-US",
+    }
+    service = "search" if category == "atm" else "categorySearch"
+    if category == "atm":
+        params["idxSet"] = "POI"
+    queries = NEARBY_CATEGORIES[category]
+    with ThreadPoolExecutor(max_workers=min(TOMTOM_SEARCH_WORKERS, len(queries))) as executor:
+        futures = [
+            executor.submit(
+                _tomtom_search_results,
+                service,
+                query,
+                params,
+                TOMTOM_CATEGORY_RESULTS_PER_QUERY,
+            )
+            for query in queries
+        ]
+        items = [
+            item
+            for future in as_completed(futures)
+            for item in future.result()
+        ]
+    if category == "atm":
+        items = [item for item in items if _tomtom_atm_result(item)]
+    return _merge_nearby_results(items, lat, lon, radius)
 
-    collected: dict[tuple[float, float], dict] = {}
-    for query in NEARBY_CATEGORIES[category]:
-        params = urlencode({
-            "key": key,
-            "lat": f"{lat:.6f}",
-            "lon": f"{lon:.6f}",
-            "radius": radius,
-            "limit": 10,
-            "countrySet": "IN",
-            "language": "en-US",
-        })
-        data = _provider_json(
-            "https://api.tomtom.com/search/2/categorySearch/"
-            f"{quote(query, safe='')}.json?{params}"
-        )
-        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
-            raise ProviderError("TomTom returned an invalid nearby places response.")
-        for item in data["results"]:
-            place = _tomtom_place_result(item)
-            if place is not None:
-                collected.setdefault((place["lat"], place["lon"]), place)
-    return list(collected.values())[:20]
+
+def search_nearby_places(
+    query: str, lat: float, lon: float, radius: int = 10_000
+) -> list[dict]:
+    key = os.environ.get("TOMTOM_API_KEY", "").strip()
+    if not key:
+        raise ProviderError("TomTom place search is not configured.")
+    if not isinstance(query, str) or not 2 <= len(query.strip()) <= 100:
+        raise InvalidLocation("Enter a nearby place search between 2 and 100 characters.")
+    lat, lon = _coordinate({"lat": lat, "lon": lon}, "Search center")
+    _validate_nearby_radius(radius)
+    params = {
+        "key": key,
+        "lat": f"{lat:.6f}",
+        "lon": f"{lon:.6f}",
+        "radius": radius,
+        "countrySet": "IN",
+        "idxSet": "POI",
+        "language": "en-US",
+    }
+    items = _tomtom_search_results("search", query.strip(), params)
+    return _merge_nearby_results(items, lat, lon, radius)
 
 
 def reverse_geocode(lat: float, lon: float) -> str | None:
@@ -504,7 +647,7 @@ def _alternative_waypoints(start_lat: float, start_lon: float,
     offset = min(max(distance * 0.1, 1_500), 25_000)
     normal_x = -delta_y / distance
     normal_y = delta_x / distance
-    waypoints = []
+    waypoints = [(midpoint_lat, midpoint_lon)]
     for direction in (1, -1):
         lat = midpoint_lat + direction * normal_y * offset / meters_per_latitude_degree
         lon = midpoint_lon + direction * normal_x * offset / meters_per_longitude_degree
@@ -543,10 +686,14 @@ def get_routes(start: object, destination: object) -> dict:
         default=float("inf"),
     )
 
-    def add_candidates(route_candidates: list[dict]) -> None:
+    def add_candidates(
+        route_candidates: list[dict], corridor_index: int | None = None
+    ) -> None:
         for candidate in sorted(
             route_candidates, key=lambda route: route.get("duration", float("inf"))
         ):
+            if len(routes) >= MAX_ROUTE_CANDIDATES:
+                return
             geometry = candidate.get("geometry", {}).get("coordinates", [])
             signature = _route_signature(geometry)
             route = _format_osrm_route(candidate, len(routes))
@@ -556,15 +703,14 @@ def get_routes(start: object, destination: object) -> dict:
             seen_geometries.add(signature)
             route["id"] = f"route-{len(routes) + 1}"
             route["label"] = "Fastest estimate" if not routes else f"Alternative {len(routes)}"
+            route["_corridor_index"] = corridor_index
             routes.append(route)
-            if len(routes) >= 3:
-                return
 
     add_candidates(candidates)
-    for via_lat, via_lon in _alternative_waypoints(
-        start_lat, start_lon, end_lat, end_lon
-    ):
-        if len(routes) >= 3:
+    waypoints = _alternative_waypoints(start_lat, start_lon, end_lat, end_lon)
+    alternative_errors = 0
+    for corridor_index, (via_lat, via_lon) in enumerate(waypoints):
+        if len(routes) >= MAX_ROUTE_CANDIDATES:
             break
         via_coordinates = (
             f"{start_lon},{start_lat};{via_lon},{via_lat};{end_lon},{end_lat}"
@@ -575,19 +721,98 @@ def get_routes(start: object, destination: object) -> dict:
             "geometries": "geojson",
             "radiuses": "1000;1000;1000",
         })
-        alternative = _provider_json(
-            f"https://router.project-osrm.org/route/v1/driving/"
-            f"{via_coordinates}?{via_params}"
-        )
+        try:
+            alternative = _provider_json(
+                f"https://router.project-osrm.org/route/v1/driving/"
+                f"{via_coordinates}?{via_params}"
+            )
+        except ProviderError:
+            alternative_errors += 1
+            continue
         if isinstance(alternative, dict) and alternative.get("code") == "Ok":
             alternative_routes = alternative.get("routes", [])
             if isinstance(alternative_routes, list):
-                add_candidates(alternative_routes)
+                add_candidates(alternative_routes, corridor_index)
     if not routes:
         raise ProviderError("The routing service did not return usable route geometry.")
+
+    routes.sort(key=lambda route: route["duration_min"])
     traffic = enrich_routes_with_traffic(routes)
+    ranked_routes = sorted(
+        routes,
+        key=lambda route: (
+            route.get("live_eta_min") is None,
+            route.get("live_eta_min") or route["duration_min"],
+        ),
+    )
+    selected_routes = [ranked_routes[0]]
+    selected_route_ids = {ranked_routes[0]["id"]}
+    for corridor_index in range(len(waypoints)):
+        if len(selected_routes) >= MAX_DISPLAYED_ROUTES:
+            break
+        route = next(
+            (
+                candidate for candidate in ranked_routes
+                if candidate.get("_corridor_index") == corridor_index
+                and candidate["id"] not in selected_route_ids
+            ),
+            None,
+        )
+        if route is not None:
+            selected_routes.append(route)
+            selected_route_ids.add(route["id"])
+    for route in ranked_routes:
+        if len(selected_routes) >= MAX_DISPLAYED_ROUTES:
+            break
+        if route["id"] not in selected_route_ids:
+            selected_routes.append(route)
+            selected_route_ids.add(route["id"])
+    selected_routes.sort(
+        key=lambda route: (
+            route.get("live_eta_min") is None,
+            route.get("live_eta_min") or route["duration_min"],
+        )
+    )
+
+    selected_states = [
+        route.get("traffic", {}).get("state", "unavailable")
+        for route in selected_routes
+    ]
+    sampled_segments = sum(
+        route.get("traffic", {}).get("sampled_segments", 0)
+        for route in selected_routes
+    )
+    if "failed_samples" in traffic:
+        expected_samples = sum(
+            route.get("traffic", {}).get(
+                "expected_samples", len(_route_sample_points(route))
+            )
+            for route in selected_routes
+        )
+        traffic["sampled_segments"] = sampled_segments
+        traffic["failed_samples"] = max(0, expected_samples - sampled_segments)
+        traffic["state"] = (
+            "live" if all(state == "live" for state in selected_states)
+            else "partial" if sampled_segments
+            else "unavailable"
+        )
+        if traffic["state"] == "unavailable":
+            traffic["notice"] = (
+                "TomTom traffic could not be sampled for the selected routes. "
+                "Route times remain non-live estimates."
+            )
+    else:
+        traffic["sampled_segments"] = sampled_segments
+    if alternative_errors:
+        traffic["alternatives_notice"] = (
+            "Some alternate-route searches failed; showing the routes that were available."
+        )
+    for index, route in enumerate(selected_routes):
+        route["id"] = f"route-{index + 1}"
+        route["label"] = "Fastest estimate" if index == 0 else f"Alternative {index}"
+        route.pop("_corridor_index", None)
     return {
-        "routes": routes,
+        "routes": selected_routes,
         "traffic": traffic,
     }
 
@@ -1138,6 +1363,22 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ProviderError as error:
                 self._send_json(502, {"error": str(error)})
             return
+        if path == "/api/nearby/search":
+            query = parse_qs(parsed.query)
+            try:
+                lat = float(query.get("lat", [""])[0])
+                lon = float(query.get("lon", [""])[0])
+                radius = int(query.get("radius", ["10000"])[0])
+                search = query.get("q", [""])[0]
+                places = search_nearby_places(search, lat, lon, radius)
+                self._send_json(200, {"places": places, "query": search})
+            except (TypeError, ValueError):
+                self._send_json(400, {"error": "Provide a search term and valid location/radius."})
+            except InvalidLocation as error:
+                self._send_json(400, {"error": str(error)})
+            except ProviderError as error:
+                self._send_json(502, {"error": str(error)})
+            return
         if path == "/api/nearby":
             query = parse_qs(parsed.query)
             try:
@@ -1246,9 +1487,8 @@ def main() -> None:
         print(error, file=sys.stderr)
         raise SystemExit(1) from error
     host = os.environ.get("FLOWSTATE_HOST", "127.0.0.1")
-    port = int(os.environ.get("FLOWSTATE_PORT", "8000"))
-    server = ThreadingHTTPServer((host, port), RequestHandler)
-    print(f"Traffic redistribution prototype: http://{host}:{port}")
+    server = ThreadingHTTPServer((host, APP_PORT), RequestHandler)
+    print(f"Traffic redistribution prototype: http://{host}:{APP_PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

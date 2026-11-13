@@ -285,19 +285,6 @@
   box-shadow: 0 4px 12px rgba(20, 123, 103, 0.25);
 }
 
-/* Smooth Route Drawing Animation */
-.leaflet-overlay-pane svg path {
-  stroke-dasharray: 1000;
-  stroke-dashoffset: 1000;
-  animation: draw-route 1.2s cubic-bezier(0.65, 0, 0.35, 1) forwards;
-}
-
-@keyframes draw-route {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
 /* Enhanced Input Focus States */
 .origin-controls input:focus,
 .map-search input:focus {
@@ -492,7 +479,6 @@
   .nearby-place,
   .place-option,
   .route-skeleton,
-  .leaflet-overlay-pane svg path,
   .traffic-notice,
   .incident-dialog {
     animation: none !important;

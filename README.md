@@ -30,11 +30,14 @@ Requires Python 3.10 or later. No Python packages are needed.
 .\start_flowstate.bat
 ```
 
-You can also double-click `start_flowstate.bat` in File Explorer. The launcher
-starts the app on port 8012. Open <http://127.0.0.1:8012>. Leaflet, map tiles, place search, and route
-calculation need an internet connection. Browser location is generally available
-on `localhost` for development; accessing the app from a phone or deploying it
-requires HTTPS for geolocation.
+You can also double-click `start_flowstate.bat` in File Explorer or run
+`python server.py` directly. Both methods use the same fixed port, 8012; open
+<http://127.0.0.1:8012>. Starting another copy while that port is occupied
+reports an address-in-use error instead of silently choosing a different port.
+Leaflet, map tiles, place search, and route calculation need an internet
+connection. Browser location is generally available on `localhost` for
+development; accessing the app from a phone or deploying it requires HTTPS for
+geolocation.
 
 ## Enable TomTom live traffic for the Kolkata pilot
 
@@ -93,12 +96,16 @@ python -m unittest discover -s tests -v
   TomTom Search for India-filtered suggestions. This requires a configured
   TomTom key with Search API access. If that is unavailable, submit the place
   search to use OpenStreetMap Nominatim instead.
-- Nearby category searches (Food & drink, Things to do, Shopping, Services,
-  Fuel) use TomTom Search around the current location or map center. Selecting a
-  result shows its approximate straight-line distance from your current
-  location, sets it as the destination, and starts route planning. Clicking the
-  map drops a destination pin; TomTom reverse geocoding provides its display
-  label when available.
+- Nearby category searches (Restaurants, Things to do, Shopping, Hospitals,
+  Fuel, ATM) use TomTom Search around the current location or map center.
+  Categories query matching POI types, retrieve additional result pages, and
+  sort results by straight-line distance. Text searches such as
+  `restaurants near me` use TomTom's POI search constrained to a 10 km radius
+  around the current GPS fix; they require location access. Selecting a result
+  shows its approximate straight-line distance from your current location,
+  sets it as the destination, and starts route planning. Clicking the map drops
+  a destination pin; TomTom reverse geocoding provides its display label when
+  available.
 - Home and recent destinations are saved in this browser's local storage on
   this device. You can set Home from a search or save your current location
   from the Home section. They are not synced between browsers or devices and
@@ -109,16 +116,26 @@ python -m unittest discover -s tests -v
   routes.
 - Submitted place searches send the typed name to the OpenStreetMap Nominatim
   service. These searches are explicitly submitted, and the server limits
-  requests to one per second; Nominatim is not used for autocomplete.
+  requests to one per second; Nominatim is not used for autocomplete or
+  `near me` searches.
 - Route requests send start and destination coordinates to the public OSRM demo
-  routing service. When its normal request returns fewer than three routes, the
-  prototype makes additional requests through two offset waypoints and keeps
-  distinct, drivable routes within a bounded detour. The router can still return
-  fewer than three options when roads or provider data do not support them.
+  routing service. It gathers the provider's alternatives plus routes through
+  the direct corridor midpoint and offset waypoints on either side. It samples
+  traffic across those candidates, then shows the fastest route, prioritizes a
+  distinct midpoint-corridor option, and fills remaining slots with the best
+  available alternatives. This is a bounded search, not an enumeration of every
+  possible road path; OSRM does not provide route-popularity data, and provider
+  coverage may still yield fewer than three distinct options.
 - When configured, the backend sends route sample coordinates to TomTom Traffic
   Flow when routes are requested and during manual/automatic traffic refreshes.
+  `Near me` searches send the typed query and current GPS fix to TomTom Search.
+  Nearby category searches use bounded concurrency to reduce wait time without
+  sending a large burst of provider requests, and use at most one 100-result
+  page per category term. ATM results use POI search filtered to ATM/bank
+  listings because TomTom's ATM category search can return no results.
   API keys stay on the backend; coordinates are still sent to the third-party
-  mapping/traffic providers.
+  mapping/traffic providers. Nearby results depend on TomTom's POI coverage and
+  listings and cannot guarantee that every business is present or up to date.
 - Current location is used in the active session and is not saved by the app.
   Home, recent destinations, and optional map issue notes are saved in this
   browser's local storage as described above. External providers process

@@ -48,11 +48,12 @@ const RECENTS_STORAGE_KEY = 'flowstate.recents.v1';
 const INCIDENTS_STORAGE_KEY = 'flowstate.local-incidents.v1';
 const MAX_RECENT_PLACES = 5;
 const CATEGORY_LABELS = {
-  food: 'Food & drink',
+  restaurants: 'Restaurants',
   things: 'Things to do',
   shopping: 'Shopping',
-  services: 'Services',
+  hospitals: 'Hospitals',
   fuel: 'Fuel',
+  atm: 'ATM',
 };
 
 let currentFix = null;
@@ -511,14 +512,13 @@ async function setMapDestination(lat, lon) {
   }
 }
 
-function renderNearbyPlaces(places, category) {
+function renderNearbyPlaces(places, category, heading = `${CATEGORY_LABELS[category]} nearby`) {
   nearbyList.replaceChildren();
   nearbyLayer.clearLayers();
-  document.getElementById('nearby-heading').textContent =
-    `${CATEGORY_LABELS[category]} nearby`;
+  document.getElementById('nearby-heading').textContent = heading;
   document.getElementById('nearby-message').textContent = places.length
-    ? `${places.length} places found. Select one to see routes.`
-    : 'No places found nearby. Try another category or move the map.';
+    ? `${places.length} places found, closest first. Select one to see routes.`
+    : 'No matching places found nearby. Try another search or move the map.';
 
   places.forEach((place) => {
     const distance = distanceLabel(place);
@@ -651,6 +651,9 @@ function saveLocalIncident(event) {
 async function searchNearby(category) {
   setSidebarExpanded(true);
   const requestId = ++nearbyRequestId;
+  latestSearchId += 1;
+  cancelDestinationSuggestions();
+  setSearchButtonLoading(false);
   searchResults.hidden = true;
   document.querySelectorAll('.category-chip').forEach((chip) => {
     chip.classList.toggle('active', chip.dataset.category === category);
@@ -676,6 +679,7 @@ async function searchNearby(category) {
   const center = currentFix
     ? { lat: currentFix.lat, lon: currentFix.lon }
     : map.getCenter();
+  const searchUsesCurrentLocation = Boolean(currentFix);
   try {
     const params = new URLSearchParams({
       category,
@@ -688,6 +692,10 @@ async function searchNearby(category) {
     if (!response.ok) throw new Error(result.error || 'Nearby place search failed.');
     if (requestId !== nearbyRequestId) return;
     renderNearbyPlaces(result.places, category);
+    if (!searchUsesCurrentLocation) {
+      document.getElementById('nearby-message').textContent +=
+        ' Search is centered on the map, not your current location.';
+    }
     if (result.places.length) {
       const bounds = L.latLngBounds(result.places.map((place) => [place.lat, place.lon]));
       if (bounds.isValid()) map.fitBounds(bounds.pad(0.15), { maxZoom: 14, animate: true });
@@ -697,6 +705,76 @@ async function searchNearby(category) {
     document.getElementById('nearby-message').textContent =
       error instanceof Error ? error.message : 'Nearby place search failed.';
   }
+}
+
+async function searchNearbyQuery(query, heading) {
+  setSidebarExpanded(true);
+  const requestId = ++nearbyRequestId;
+  latestSearchId += 1;
+  cancelDestinationSuggestions();
+  setSearchButtonLoading(false);
+  searchResults.hidden = true;
+  document.querySelectorAll('.category-chip').forEach((chip) => {
+    chip.classList.remove('active');
+    chip.setAttribute('aria-pressed', 'false');
+  });
+  nearbySection.hidden = false;
+  nearbyList.hidden = false;
+  const nearbyViewToggle = document.getElementById('nearby-view-toggle');
+  nearbyViewToggle.textContent = 'Map only';
+  nearbyViewToggle.setAttribute('aria-pressed', 'false');
+  nearbyList.replaceChildren();
+  nearbyLayer.clearLayers();
+  document.getElementById('nearby-heading').textContent = heading;
+
+  if (!currentFix) {
+    document.getElementById('nearby-message').textContent =
+      'Current location is unavailable. Allow location access to search near you.';
+    setLocationStatus('Allow location access to search for places near you.');
+    return;
+  }
+  if (!trafficConfigured) {
+    document.getElementById('nearby-message').textContent =
+      'Nearby place search needs a configured TomTom key.';
+    return;
+  }
+
+  document.getElementById('nearby-message').textContent = 'Searching near your current location…';
+  setSearchButtonLoading(true, 'Searching nearby places');
+  setLocationStatus(`Searching for ${query} near your current location…`);
+  try {
+    const params = new URLSearchParams({
+      q: query,
+      lat: String(currentFix.lat),
+      lon: String(currentFix.lon),
+      radius: '10000',
+    });
+    const response = await fetch(`/api/nearby/search?${params}`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Nearby place search failed.');
+    if (requestId !== nearbyRequestId) return;
+    renderNearbyPlaces(result.places, null, heading);
+    if (result.places.length) {
+      const bounds = L.latLngBounds(result.places.map((place) => [place.lat, place.lon]));
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.15), { maxZoom: 14, animate: true });
+      setLocationStatus(`${result.places.length} results near your location.`);
+    }
+  } catch (error) {
+    if (requestId !== nearbyRequestId) return;
+    document.getElementById('nearby-message').textContent =
+      error instanceof Error ? error.message : 'Nearby place search failed.';
+    setLocationStatus('Nearby place search failed.');
+  } finally {
+    if (requestId === nearbyRequestId) setSearchButtonLoading(false);
+  }
+}
+
+function cancelDestinationSuggestions() {
+  if (suggestionTimer !== null) clearTimeout(suggestionTimer);
+  suggestionTimer = null;
+  suggestionRequestId += 1;
+  if (suggestionController) suggestionController.abort();
+  suggestionController = null;
 }
 
 async function findPlaces(query, kind) {
@@ -798,6 +876,15 @@ function moveSuggestionSelection(direction) {
   return true;
 }
 
+function extractNearbySearchTerm(query) {
+  const qualifier = /\b(?:near\s+me|nearby|near\s+my\s+location|near\s+my\s+current\s+location|around\s+me|close\s+by|close\s+to\s+me|in\s+my\s+area)\b/i;
+  if (!qualifier.test(query)) return null;
+  return query
+    .replace(/\b(?:near\s+me|nearby|near\s+my\s+location|near\s+my\s+current\s+location|around\s+me|close\s+by|close\s+to\s+me|in\s+my\s+area)\b/gi, ' ')
+    .replace(/[\s,]+/g, ' ')
+    .trim();
+}
+
 function scheduleDestinationSuggestions() {
   if (suggestionTimer !== null) clearTimeout(suggestionTimer);
   suggestionTimer = null;
@@ -809,6 +896,16 @@ function scheduleDestinationSuggestions() {
   const query = destinationInput.value.trim();
   if (query.length < 2) {
     showRecentSearches();
+    return;
+  }
+
+  const nearbyQuery = extractNearbySearchTerm(query);
+  if (nearbyQuery !== null) {
+    showSuggestionMessage(
+      nearbyQuery.length >= 2
+        ? 'Press Search to find matching places near your current location.'
+        : 'Enter a place or business before “near me”.',
+    );
     return;
   }
 
@@ -848,6 +945,17 @@ function searchForDestination() {
   if (query.length < 2) {
     destinationInput.focus();
     setLocationStatus('Enter a destination to find routes.');
+    return;
+  }
+  const nearbyQuery = extractNearbySearchTerm(query);
+  if (nearbyQuery !== null) {
+    if (nearbyQuery.length < 2) {
+      setLocationStatus('Enter a place or business before “near me”.');
+      return;
+    }
+    destinationPlace = null;
+    clearRouteState();
+    searchNearbyQuery(nearbyQuery, query);
     return;
   }
   const firstSuggestion = placeOptions.querySelector('button.place-option');
@@ -929,10 +1037,13 @@ async function loadRoutes({ rerouting = false } = {}) {
 function renderTrafficStatus(traffic) {
   const state = traffic?.state || 'unavailable';
   const live = state === 'live' || state === 'partial';
+  const alternativesNotice = traffic?.alternatives_notice
+    ? ` ${traffic.alternatives_notice}`
+    : '';
   trafficNotice.dataset.state = live ? 'live' : 'setup';
   trafficNotice.textContent = live
-    ? `TomTom sampled ${traffic.sampled_segments} points across these routes; this is not a full-road traffic layer. ETAs are estimates. Drivers are not automatically assigned.`
-    : (traffic?.notice || 'Live traffic is unavailable; showing non-live route estimates.');
+    ? `TomTom sampled ${traffic.sampled_segments} points across these routes; this is not a full-road traffic layer. ETAs are estimates. Drivers are not automatically assigned.${alternativesNotice}`
+    : `${traffic?.notice || 'Live traffic is unavailable; showing non-live route estimates.'}${alternativesNotice}`;
   trafficSummary.hidden = !live;
   trafficSummary.textContent = live
     ? `TomTom sample time: ${new Date(traffic.sampled_at).toLocaleTimeString('en-IN')} · ${traffic.failed_samples || 0} sample requests failed · refreshes every 5 min.`
@@ -1275,6 +1386,10 @@ document.getElementById('open-recents-panel').addEventListener('click', () => {
 
 routeForm.addEventListener('submit', (event) => {
   event.preventDefault();
+  if (extractNearbySearchTerm(destinationInput.value.trim()) !== null) {
+    searchForDestination();
+    return;
+  }
   if (manualOrigin && !manualOriginPlace) {
     const query = originInput.value.trim();
     if (query.length < 2) {
