@@ -1175,7 +1175,7 @@ function renderRoutes() {
     const routeColor = `hsl(${Math.round(120 - relativeTrafficDelay * 120)} 55% 40%)`;
     subtitle.textContent = index === 0
       ? `${formatDistance(route.distance_km)} · ${sampleText}`
-      : `${formatDistance(route.distance_km)} · ${extraTime} min more · ${sampleText}`;
+      : `${formatDistance(route.distance_km)} · ${UIEnhancements.formatDurationMinutes(extraTime)} more · ${sampleText}`;
     details.append(label, subtitle);
     const delayLabel = document.createElement('span');
     delayLabel.className = 'route-delay-label';
@@ -1195,8 +1195,8 @@ function renderRoutes() {
     delayFill.className = 'route-delay-fill';
     mark.style.setProperty('--route-color', routeColor);
     delayLabel.textContent = hasDistinctTrafficDelays
-      ? `Sampled delay ${Math.max(0, routeTraffic.delay_percent)}% · ${extraTime} min slower`
-      : `Relative ETA +${extraTime} min${hasTrafficSamples
+      ? `Sampled delay ${Math.max(0, routeTraffic.delay_percent)}% · ${UIEnhancements.formatDurationMinutes(extraTime)} slower`
+      : `Relative ETA +${UIEnhancements.formatDurationMinutes(extraTime)}${hasTrafficSamples
       ? ` · sampled delay ${Math.max(0, routeTraffic.delay_percent)}%`
       : ' · no live sample'}`;
     delayFill.style.width = `${8 + relativeTrafficDelay * 92}%`;
@@ -1205,7 +1205,7 @@ function renderRoutes() {
     details.append(delayLabel, delayTrack);
     const time = document.createElement('span');
     time.className = 'route-time';
-    time.append(document.createTextNode(`${etaMinutes} min`));
+    time.append(document.createTextNode(UIEnhancements.formatDurationMinutes(etaMinutes)));
     const etaLabel = document.createElement('small');
     etaLabel.textContent = Number.isFinite(route.live_eta_min) ? 'sampled estimate' : 'estimate';
     time.append(etaLabel);
@@ -1231,7 +1231,7 @@ function drawRoutes() {
       lineCap: 'round',
       lineJoin: 'round',
       bubblingMouseEvents: false,
-    }).bindTooltip(`${index === selectedRouteIndex ? 'Selected route' : (index === 0 ? 'Fastest estimate' : `Alternative ${index}`)} · ${route.duration_min} min`)
+    }).bindTooltip(`${index === selectedRouteIndex ? 'Selected route' : (index === 0 ? 'Fastest estimate' : `Alternative ${index}`)} · ${UIEnhancements.formatDurationMinutes(route.duration_min)}`)
       .addTo(routeLayer);
   });
   if (destinationPlace) {
@@ -1332,7 +1332,7 @@ function updateNavigationStep() {
   const totalMinutes = Number.isFinite(route.live_eta_min) ? route.live_eta_min : route.duration_min;
   const remainingMinutes = Math.ceil(totalMinutes * (1 - progress));
   document.getElementById('trip-progress').textContent =
-    `Approx. ${formatDistance(remainingKm)} remaining · ${remainingMinutes} min by current estimate`;
+    `Approx. ${formatDistance(remainingKm)} remaining · ${UIEnhancements.formatDurationMinutes(remainingMinutes)} by current estimate`;
 
   const instructions = route.instructions;
   if (!instructions.length) return;

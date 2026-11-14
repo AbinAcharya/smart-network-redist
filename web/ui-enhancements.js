@@ -81,6 +81,21 @@ const ToastManager = {
   }
 };
 
+function formatDurationMinutes(totalMinutes) {
+  const minutes = Math.max(0, Math.ceil(totalMinutes));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const remainingMinutes = minutes % 60;
+  const parts = [];
+
+  if (days) parts.push(`${days} day${days === 1 ? '' : 's'}`);
+  if (hours) parts.push(`${hours} hr`);
+  if (remainingMinutes || parts.length === 0) {
+    parts.push(`${remainingMinutes} min`);
+  }
+  return parts.join(' ');
+}
+
 // Enhanced Location Marker with Pulse
 // ============================================
 function createPulsingLocationMarker(latlng) {
@@ -170,7 +185,7 @@ function drawRoutesWithAnimation(routes, routeLayer, selectedIndex, colors) {
     });
 
     polyline.bindTooltip(
-      `${index === selectedIndex ? 'Selected route' : (index === 0 ? 'Fastest estimate' : `Alternative ${index}`)} · ${route.duration_min} min`
+      `${index === selectedIndex ? 'Selected route' : (index === 0 ? 'Fastest estimate' : `Alternative ${index}`)} · ${formatDurationMinutes(route.duration_min)}`
     );
 
     polyline.addTo(routeLayer);
@@ -304,6 +319,7 @@ window.UIEnhancements = {
   createRouteSkeleton,
   showRouteLoadingState,
   createPlaceSkeleton,
+  formatDurationMinutes,
   drawRoutesWithAnimation,
   smoothScrollToElement,
   enhancedSetLocationStatus: window.enhancedSetLocationStatus
