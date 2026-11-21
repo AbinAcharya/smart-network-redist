@@ -86,6 +86,12 @@ let activeSuggestionIndex = -1;
 let incidentLocation = null;
 let localIncidents = readSavedIncidents();
 
+function refreshIcons() {
+  if (window.lucide) {
+    lucide.createIcons();
+  }
+}
+
 function setSidebarExpanded(expanded) {
   appShell.classList.toggle('sidebar-expanded', expanded);
   sidebar.classList.toggle('expanded', expanded);
@@ -222,7 +228,7 @@ function renderSavedPlaces() {
     const icon = document.createElement('span');
     icon.className = 'place-round-icon';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '⌖';
+    icon.innerHTML = '<i data-lucide="map-pin" style="width: 16px; height: 16px;"></i>';
     const copy = document.createElement('span');
     copy.className = 'recent-copy';
     const name = document.createElement('strong');
@@ -248,6 +254,7 @@ function renderSavedPlaces() {
     button.addEventListener('click', () => selectDestination(place));
     recentList.append(button);
   });
+  refreshIcons();
 }
 
 function formatRelativeTime(timestamp) {
@@ -541,7 +548,7 @@ function renderNearbyPlaces(places, category, heading = `${CATEGORY_LABELS[categ
     const icon = document.createElement('span');
     icon.className = 'place-round-icon';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '⌖';
+    icon.innerHTML = '<i data-lucide="map-pin" style="width: 16px; height: 16px;"></i>';
     const copy = document.createElement('span');
     copy.className = 'nearby-copy';
     const name = document.createElement('strong');
@@ -564,6 +571,7 @@ function renderNearbyPlaces(places, category, heading = `${CATEGORY_LABELS[categ
     option.addEventListener('click', () => selectDestination(place));
     nearbyList.append(option);
   });
+  refreshIcons();
 }
 
 const INCIDENT_LABELS = {
@@ -1004,9 +1012,23 @@ async function loadRoutes({ rerouting = false } = {}) {
   const requestId = ++latestSearchId;
   setSearchButtonLoading(true, rerouting ? 'Updating route' : 'Finding routes');
   setLocationStatus(rerouting ? 'Off route · finding a new path…' : 'Finding driving routes…');
+  if (!rerouting) {
+    routeSection.hidden = false;
+    const loadingMessage = document.createElement('p');
+    loadingMessage.className = 'route-loading-message';
+    loadingMessage.textContent = 'Finding available routes…';
+    routeOptions.innerHTML = `
+      <div class="skeleton skeleton-route"></div>
+      <div class="skeleton skeleton-route"></div>
+    `;
+    routeOptions.prepend(loadingMessage);
+  }
   try {
     const result = await requestRouteData(start, destinationPlace);
     if (requestId !== latestSearchId) return;
+    if (!Array.isArray(result.routes) || result.routes.length === 0) {
+      throw new Error('No drivable routes were returned. Please try again.');
+    }
     routeChoices = result.routes;
     selectedRouteIndex = 0;
     renderTrafficStatus(result.traffic);
@@ -1027,7 +1049,20 @@ async function loadRoutes({ rerouting = false } = {}) {
     if (activeNavigation) updateNavigationStep();
   } catch (error) {
     if (requestId === latestSearchId) {
-      setLocationStatus(error instanceof Error ? error.message : 'Could not find routes.');
+      const message = error instanceof Error ? error.message : 'Could not find routes.';
+      setLocationStatus(message);
+      if (!rerouting) {
+        routeOptions.replaceChildren();
+        const errorMessage = document.createElement('p');
+        errorMessage.className = 'route-error-message';
+        errorMessage.textContent = message;
+        const retryButton = document.createElement('button');
+        retryButton.className = 'text-button';
+        retryButton.type = 'button';
+        retryButton.textContent = 'Try again';
+        retryButton.addEventListener('click', () => loadRoutes());
+        routeOptions.append(errorMessage, retryButton);
+      }
     }
   } finally {
     if (requestId === latestSearchId) setSearchButtonLoading(false);
@@ -1173,9 +1208,10 @@ function renderRoutes() {
         / (maxSampledDelay - minSampledDelay)
       : relativeEta;
     const routeColor = `hsl(${Math.round(120 - relativeTrafficDelay * 120)} 55% 40%)`;
+    const activeVehiclesLabel = route.active_vehicles ? ` · 🚗 ${route.active_vehicles} active` : '';
     subtitle.textContent = index === 0
-      ? `${formatDistance(route.distance_km)} · ${sampleText}`
-      : `${formatDistance(route.distance_km)} · ${UIEnhancements.formatDurationMinutes(extraTime)} more · ${sampleText}`;
+      ? `${formatDistance(route.distance_km)} · ${sampleText}${activeVehiclesLabel}`
+      : `${formatDistance(route.distance_km)} · ${UIEnhancements.formatDurationMinutes(extraTime)} more · ${sampleText}${activeVehiclesLabel}`;
     details.append(label, subtitle);
     const delayLabel = document.createElement('span');
     delayLabel.className = 'route-delay-label';
@@ -1551,8 +1587,34 @@ destinationInput.addEventListener('input', () => {
   scheduleDestinationSuggestions();
 });
 
+async function selectRoute(corridorKey) {
+  try {
+    await fetch('/api/routes/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corridor_key: corridorKey }),
+    });
+  } catch (error) {
+    console.error('Failed to select route', error);
+  }
+}
+
+async function completeRoute(corridorKey) {
+  try {
+    await fetch('/api/routes/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ corridor_key: corridorKey }),
+    });
+  } catch (error) {
+    console.error('Failed to complete route', error);
+  }
+}
+
 document.getElementById('start-navigation').addEventListener('click', () => {
   if (!routeChoices.length) return;
+  const selectedRoute = routeChoices[selectedRouteIndex];
+  selectRoute(selectedRoute.corridor_key);
   activeNavigation = true;
   document.getElementById('navigation-card').hidden = false;
   document.getElementById('start-navigation').hidden = true;
@@ -1562,6 +1624,8 @@ document.getElementById('start-navigation').addEventListener('click', () => {
 });
 
 document.getElementById('stop-navigation').addEventListener('click', () => {
+  const selectedRoute = routeChoices[selectedRouteIndex];
+  if (selectedRoute) completeRoute(selectedRoute.corridor_key);
   activeNavigation = false;
   offRouteReadings = 0;
   if (routeChoices.length) renderRoutes();
@@ -1661,3 +1725,15 @@ mobileLayout.addEventListener('change', (event) => setSidebarExpanded(event.matc
 loadTrafficStatus();
 startLocationTracking();
 updateSearchPrompt();
+if (window.lucide) lucide.createIcons();
+
+document.getElementById('toggle-theme').addEventListener('click', () => {
+  const isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('flowstate.theme', isDark ? 'dark' : 'light');
+});
+
+// Load saved theme
+if (localStorage.getItem('flowstate.theme') === 'dark' ||
+    (!localStorage.getItem('flowstate.theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  document.documentElement.classList.add('dark');
+}

@@ -42,6 +42,8 @@ _geocode_lock = threading.Lock()
 _last_geocode_at = 0.0
 _traffic_cache_lock = threading.Lock()
 _traffic_cache: dict[tuple[float, float], tuple[float, dict]] = {}
+_active_reservations_lock = threading.Lock()
+_active_reservations: dict[str, int] = {}
 USER_AGENT = "FlowstateNavigationPrototype/0.1 (local development demo)"
 
 REGIONS = [
@@ -604,6 +606,16 @@ def _route_signature(geometry: list) -> tuple:
     )
 
 
+def _route_corridor_key(geometry: list) -> str:
+    if not geometry:
+        return ""
+    # Sample 5 points to identify the corridor across different A-B pairs
+    # but rounded to 3 decimal places (~110m) to group similar paths.
+    indices = [0, len(geometry) // 4, len(geometry) // 2, 3 * len(geometry) // 4, -1]
+    sampled = [geometry[i] for i in indices]
+    return "|".join(f"{round(p[0], 3)},{round(p[1], 3)}" for p in sampled)
+
+
 def _format_osrm_route(candidate: dict, index: int) -> dict | None:
     geometry = candidate.get("geometry", {}).get("coordinates", [])
     if len(geometry) < 2:
@@ -622,6 +634,7 @@ def _format_osrm_route(candidate: dict, index: int) -> dict | None:
             })
     return {
         "id": f"route-{index + 1}",
+        "corridor_key": _route_corridor_key(geometry),
         "label": "Fastest estimate" if index == 0 else f"Alternative {index}",
         "distance_km": round(candidate.get("distance", 0) / 1000, 1),
         "duration_min": max(1, round(candidate.get("duration", 0) / 60)),
@@ -700,6 +713,14 @@ def get_routes(start: object, destination: object) -> dict:
             if (route is None or not signature or signature in seen_geometries
                     or candidate.get("duration", float("inf")) > fastest_duration * 2.25):
                 continue
+
+            # Apply active load penalty (+15 seconds per active vehicle on this corridor)
+            with _active_reservations_lock:
+                load = _active_reservations.get(route["corridor_key"], 0)
+                if load > 0:
+                    route["duration_min"] += round((load * 15) / 60, 1)
+                    route["active_vehicles"] = load
+
             seen_geometries.add(signature)
             route["id"] = f"route-{len(routes) + 1}"
             route["label"] = "Fastest estimate" if not routes else f"Alternative {len(routes)}"
@@ -709,6 +730,7 @@ def get_routes(start: object, destination: object) -> dict:
     add_candidates(candidates)
     waypoints = _alternative_waypoints(start_lat, start_lon, end_lat, end_lon)
     alternative_errors = 0
+    alternative_requests = []
     for corridor_index, (via_lat, via_lon) in enumerate(waypoints):
         if len(routes) >= MAX_ROUTE_CANDIDATES:
             break
@@ -721,18 +743,28 @@ def get_routes(start: object, destination: object) -> dict:
             "geometries": "geojson",
             "radiuses": "1000;1000;1000",
         })
-        try:
-            alternative = _provider_json(
-                f"https://router.project-osrm.org/route/v1/driving/"
-                f"{via_coordinates}?{via_params}"
-            )
-        except ProviderError:
-            alternative_errors += 1
-            continue
-        if isinstance(alternative, dict) and alternative.get("code") == "Ok":
-            alternative_routes = alternative.get("routes", [])
-            if isinstance(alternative_routes, list):
-                add_candidates(alternative_routes, corridor_index)
+        url = (
+            f"https://router.project-osrm.org/route/v1/driving/"
+            f"{via_coordinates}?{via_params}"
+        )
+        alternative_requests.append((corridor_index, url))
+
+    if alternative_requests:
+        with ThreadPoolExecutor(max_workers=len(alternative_requests)) as executor:
+            futures = {
+                corridor_index: executor.submit(_provider_json, url)
+                for corridor_index, url in alternative_requests
+            }
+            for corridor_index, _ in alternative_requests:
+                try:
+                    alternative = futures[corridor_index].result()
+                except ProviderError:
+                    alternative_errors += 1
+                    continue
+                if isinstance(alternative, dict) and alternative.get("code") == "Ok":
+                    alternative_routes = alternative.get("routes", [])
+                    if isinstance(alternative_routes, list):
+                        add_candidates(alternative_routes, corridor_index)
     if not routes:
         raise ProviderError("The routing service did not return usable route geometry.")
 
@@ -1440,7 +1472,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path not in ("/api/redistribute", "/api/routes", "/api/traffic/refresh"):
+        if path not in ("/api/redistribute", "/api/routes", "/api/traffic/refresh", "/api/routes/select", "/api/routes/complete"):
             self.send_error(404)
             return
         try:
@@ -1456,6 +1488,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 result = get_routes(payload.get("start"), payload.get("destination"))
             elif path == "/api/traffic/refresh":
                 result = sample_existing_routes(payload.get("routes"))
+            elif path == "/api/routes/select":
+                corridor_key = payload.get("corridor_key")
+                if corridor_key:
+                    with _active_reservations_lock:
+                        _active_reservations[corridor_key] = _active_reservations.get(corridor_key, 0) + 1
+                result = {"status": "ok"}
+            elif path == "/api/routes/complete":
+                corridor_key = payload.get("corridor_key")
+                if corridor_key:
+                    with _active_reservations_lock:
+                        _active_reservations[corridor_key] = max(0, _active_reservations.get(corridor_key, 0) - 1)
+                result = {"status": "ok"}
             else:
                 result = redistribute(payload.get("vehicles"), payload.get("region", "DL"))
         except (json.JSONDecodeError, UnicodeDecodeError):
